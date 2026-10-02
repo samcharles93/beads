@@ -549,7 +549,16 @@ func collectGitHubLinkSyncData(ctx context.Context, st storage.Storage, scope gi
 		allIssues = append(allIssues, item.Issue)
 	}
 
-	scopedIssues := filterGitHubLinkScopedIssues(allIssues, opts)
+	// Keep the relationship pass inside the same subtree as the content push.
+	var descendantSet map[string]bool
+	if opts.ParentID != "" {
+		descendantSet, err = buildSyncDescendantSet(ctx, st, opts.ParentID)
+		if err != nil {
+			return githubLinkSyncData{}, []string{fmt.Sprintf("GitHub relationship sync skipped: resolving parent %s: %v", opts.ParentID, err)}
+		}
+	}
+
+	scopedIssues := filterGitHubLinkScopedIssues(allIssues, opts, descendantSet)
 	scopedIssueIDs := make(map[string]bool, len(scopedIssues))
 	for _, issue := range scopedIssues {
 		if issue != nil && issue.ID != "" {
@@ -642,7 +651,7 @@ func githubLinkSyncListRequest() issueops.ListRequest {
 	}
 }
 
-func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOptions) []*types.Issue {
+func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOptions, descendantSet map[string]bool) []*types.Issue {
 	var issueIDSet map[string]bool
 	if len(opts.IssueIDs) > 0 {
 		issueIDSet = make(map[string]bool, len(opts.IssueIDs))
@@ -657,6 +666,9 @@ func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOption
 			continue
 		}
 		if issueIDSet != nil && !issueIDSet[issue.ID] {
+			continue
+		}
+		if descendantSet != nil && !descendantSet[issue.ID] {
 			continue
 		}
 		if opts.ExcludeEphemeral && issue.Ephemeral {
